@@ -1,6 +1,9 @@
 # Secrets
 .env
 
+# AI context
+CLAUDE.md
+
 # Archives
 *.zip
 
