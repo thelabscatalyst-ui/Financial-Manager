@@ -27,13 +27,24 @@ export const AuthProvider = ({ children }) => {
     setUser(data.user);
   };
 
+  const register = async (username, password) => {
+    const res = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    setUser(data.user);
+  };
+
   const logout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' });
     setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, isAuthenticated: !!user }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, isAuthenticated: !!user }}>
       {children}
     </AuthContext.Provider>
   );

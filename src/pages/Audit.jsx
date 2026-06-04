@@ -30,19 +30,26 @@ const Audit = () => {
   const [filter, setFilter] = useState(ALL);
 
   const types = [ALL, ...Object.keys(typeConfig)];
-  const filtered = filter === ALL ? auditLog : auditLog.filter(e => e.type === filter);
+  const filtered = (filter === ALL ? auditLog : auditLog.filter(e => e.type === filter)).slice(0, 50);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h2 style={{ marginBottom: '4px' }}>Audit Log</h2>
-          <p className="text-sm text-muted">All activity — auto-purged after 3 months</p>
+          <p className="text-sm text-muted">Last 50 entries — auto-purged after 3 months</p>
         </div>
         <select
           value={filter}
           onChange={e => setFilter(e.target.value)}
-          style={{ minWidth: '160px' }}
+          style={{
+            width: '180px',
+            height: '38px',
+            padding: '0 0.875rem',
+            fontSize: '0.8125rem',
+            fontWeight: 500,
+            borderRadius: '10px',
+          }}
         >
           {types.map(t => (
             <option key={t} value={t}>

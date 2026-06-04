@@ -43,6 +43,7 @@ const Holdings = ({ limit = 5, showActions = true }) => {
   const displayHoldings = limit ? holdings.slice(0, limit) : holdings;
 
   return (
+    <>
     <div className="panel flex-col flex" style={{ height: '100%' }}>
       <div className="flex justify-between items-center mb-6">
         <div className="flex items-center gap-4">
@@ -195,79 +196,88 @@ const Holdings = ({ limit = 5, showActions = true }) => {
         </div>
       )}
 
-      {/* Add Asset Modal */}
-      {showModal && (
+    </div>
+    {/* Add Asset Modal */}
+    {showModal && (
         <div style={{
           position: 'fixed', inset: 0,
-          backgroundColor: 'rgba(5, 8, 22, 0.8)',
-          backdropFilter: 'blur(8px)',
+          background: 'rgba(5,8,22,0.8)',
+          backdropFilter: 'blur(16px)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 1000
+          padding: '2rem', zIndex: 1000, overflowY: 'auto'
         }}>
-          <div className="panel" style={{ width: '100%', maxWidth: '420px' }}>
-            <div className="flex justify-between items-center mb-6">
-              <h3 style={{ margin: 0 }}>Add Asset</h3>
-              <button className="btn-icon-only" onClick={closeModal}><X size={20} /></button>
+          <div className="panel" style={{ width: '100%', maxWidth: '440px', padding: '1.75rem' }}>
+
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 700 }}>Add Asset</h3>
+                <p style={{ margin: '3px 0 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>Add a holding to your portfolio</p>
+              </div>
+              <button className="btn-icon-only" onClick={closeModal}><X size={18} /></button>
             </div>
 
-            <form onSubmit={handleAdd} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                <label className="text-sm text-secondary">Asset Name</label>
+            <form onSubmit={handleAdd} style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
+
+              {/* Asset Name */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Asset Name</label>
                 <input
-                  type="text"
-                  value={assetName}
-                  onChange={e => setAssetName(e.target.value)}
-                  placeholder="e.g. GoldBees, RELIANCE"
-                  required
-                  autoFocus
+                  type="text" value={assetName} onChange={e => setAssetName(e.target.value)}
+                  placeholder="e.g. GoldBees, RELIANCE" required autoFocus
+                  style={{ height: '48px' }}
                 />
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                <label className="text-sm text-secondary">Type</label>
-                <select value={tag} onChange={e => setTag(e.target.value)}>
+              {/* Type */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Type</label>
+                <select value={tag} onChange={e => setTag(e.target.value)} style={{ height: '48px' }}>
                   {Tags.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
 
+              {/* Units + Avg Price */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  <label className="text-sm text-secondary">Units</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Units</label>
                   <input
-                    type="number"
-                    step="any"
-                    value={units}
+                    type="number" step="any" value={units}
                     onChange={e => setUnits(e.target.value)}
-                    placeholder="0"
-                    required
+                    placeholder="0" required style={{ height: '48px', fontSize: '1rem', fontWeight: 600 }}
                   />
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  <label className="text-sm text-secondary">Avg Price (₹)</label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={buyPrice}
-                    onChange={e => setBuyPrice(e.target.value)}
-                    placeholder="0.00"
-                    required
-                  />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Avg Price</label>
+                  <div style={{ position: 'relative' }}>
+                    <span style={{
+                      position: 'absolute', left: '0.875rem', top: '50%', transform: 'translateY(-50%)',
+                      fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-secondary)', pointerEvents: 'none',
+                    }}>₹</span>
+                    <input
+                      type="number" step="any" value={buyPrice}
+                      onChange={e => setBuyPrice(e.target.value)}
+                      placeholder="0.00" required
+                      style={{ paddingLeft: '2rem', height: '48px', fontSize: '1rem', fontWeight: 600 }}
+                    />
+                  </div>
                 </div>
               </div>
 
-              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.75rem' }}>
                 <button
                   type="button"
                   className="btn btn-outline"
                   style={{ flex: 1 }}
                   onClick={closeModal}
+                  style={{ height: '48px', borderRadius: '12px', fontSize: '0.9375rem', fontWeight: 600 }}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   className="btn btn-primary"
-                  style={{ flex: 1 }}
+                  style={{ height: '48px', borderRadius: '12px', fontSize: '0.9375rem', fontWeight: 600 }}
                 >
                   Add to Portfolio
                 </button>
@@ -276,7 +286,7 @@ const Holdings = ({ limit = 5, showActions = true }) => {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 };
 

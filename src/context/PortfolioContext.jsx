@@ -1,7 +1,7 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import { useAuth } from './AuthContext';
 
 const PortfolioContext = createContext();
-
 export const usePortfolio = () => useContext(PortfolioContext);
 
 const parseMoney = (value, fallback = 0) => {
@@ -19,69 +19,102 @@ const fmt = (v) => typeof v === 'number'
   : String(v);
 
 export const PortfolioProvider = ({ children }) => {
-  const [wallet, setWallet] = useState(() => {
-    const s = localStorage.getItem('portfolio_wallet');
-    return s ? JSON.parse(s) : { cash: 0, online: 0, demat: 0 };
-  });
+  const { user } = useAuth();
 
-  const [expenses, setExpenses] = useState(() => {
-    const s = localStorage.getItem('portfolio_expenses');
-    return s ? JSON.parse(s) : [];
-  });
-
-  const [holdings, setHoldings] = useState(() => {
-    const s = localStorage.getItem('portfolio_holdings');
-    return s ? JSON.parse(s) : [];
-  });
-
-  const [auditLog, setAuditLog] = useState(() => {
-    const s = localStorage.getItem('portfolio_audit');
-    return s ? JSON.parse(s) : [];
-  });
-
+  const [wallet,   setWallet]   = useState({ cash: 0, online: 0, demat: 0 });
+  const [expenses, setExpenses] = useState([]);
+  const [holdings, setHoldings] = useState([]);
+  const [auditLog, setAuditLog] = useState([]);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [syncError, setSyncError] = useState(null);
+  const [syncError,  setSyncError]  = useState(null);
 
-  // ── Persistence ──────────────────────────────────────────────────────────────
+  const saveReady  = useRef(false);
+  const [dataLoaded, setDataLoaded] = useState(false);
+
+  // ── Load from server whenever the logged-in user changes ────────────────────
+  // CRITICAL: saveReady is ONLY enabled after a SUCCESSFUL load. If the load
+  // fails for any reason, we keep retrying and DO NOT allow saves — otherwise
+  // we'd overwrite the user's real data with empty state.
 
   useEffect(() => {
-    localStorage.setItem('portfolio_wallet', JSON.stringify(wallet));
-  }, [wallet]);
-
-  useEffect(() => {
-    const fiveMonthsAgo = new Date();
-    fiveMonthsAgo.setMonth(fiveMonthsAgo.getMonth() - 5);
-    const purged = expenses.filter(e => e.important || new Date(e.date) >= fiveMonthsAgo);
-    if (purged.length !== expenses.length) {
-      setExpenses(purged);
-    } else {
-      localStorage.setItem('portfolio_expenses', JSON.stringify(expenses));
+    if (!user) {
+      // Disable saves immediately so any pending state change can't write to DB
+      saveReady.current = false;
+      setDataLoaded(false);
+      // Reset for next user
+      setWallet({ cash: 0, online: 0, demat: 0 });
+      setExpenses([]);
+      setHoldings([]);
+      setAuditLog([]);
+      return;
     }
-  }, [expenses]);
+
+    saveReady.current = false;
+    setDataLoaded(false);
+
+    let cancelled = false;
+    let retryTimer = null;
+
+    const load = async () => {
+      try {
+        const res = await fetch('/api/data');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (cancelled) return;
+
+        setWallet(data.wallet     ?? { cash: 0, online: 0, demat: 0 });
+        setExpenses(data.expenses ?? []);
+        setHoldings(data.holdings ?? []);
+        setAuditLog(data.auditLog ?? []);
+
+        // Enable saving only AFTER state has been applied
+        requestAnimationFrame(() => {
+          if (!cancelled) {
+            saveReady.current = true;
+            setDataLoaded(true);
+          }
+        });
+      } catch (err) {
+        console.warn('Data load failed, retrying in 2s:', err.message);
+        if (!cancelled) retryTimer = setTimeout(load, 2000);
+      }
+    };
+
+    load();
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, [user?.id]);
+
+  // ── Auto-sync Angel One on every login ───────────────────────────────────────
+  useEffect(() => {
+    if (!dataLoaded) return;
+    syncAngelOneHoldings();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataLoaded]);
+
+  // ── Debounced save to server after any state change ──────────────────────────
 
   useEffect(() => {
-    localStorage.setItem('portfolio_holdings', JSON.stringify(holdings));
-  }, [holdings]);
-
-  useEffect(() => {
-    const threeMonthsAgo = new Date();
-    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-    const purged = auditLog.filter(e => new Date(e.timestamp) >= threeMonthsAgo);
-    if (purged.length !== auditLog.length) {
-      setAuditLog(purged);
-    } else {
-      localStorage.setItem('portfolio_audit', JSON.stringify(auditLog));
-    }
-  }, [auditLog]);
+    if (!saveReady.current) return;
+    const t = setTimeout(() => {
+      fetch('/api/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wallet, expenses, holdings, auditLog })
+      }).catch(() => {});
+    }, 400);
+    return () => clearTimeout(t);
+  }, [wallet, expenses, holdings, auditLog]);
 
   // ── Audit ────────────────────────────────────────────────────────────────────
 
   const addAuditEntry = useCallback((type, description, data = {}) => {
     setAuditLog(prev => [{
       id: Date.now().toString(),
-      type,
-      description,
-      data,
+      type, description, data,
       timestamp: new Date().toISOString()
     }, ...prev]);
   }, []);
@@ -143,8 +176,7 @@ export const PortfolioProvider = ({ children }) => {
     const h = holdings.find(h => h.id === id);
     if (!h || h.status === 'closed' || h.isSynced) return;
     setHoldings(prev => prev.map(h => h.id === id
-      ? { ...h, status: 'closed', closeDate: new Date().toISOString() }
-      : h
+      ? { ...h, status: 'closed', closeDate: new Date().toISOString() } : h
     ));
     addAuditEntry('holding_closed', `Closed position: ${h.assetName}`, { units: h.units });
   };
@@ -162,13 +194,13 @@ export const PortfolioProvider = ({ children }) => {
     setSyncError(null);
     try {
       const response = await fetch('/api/portfolio');
-      if (response.status === 401) return; // silently skip if not authed
+      if (response.status === 401) return;
 
       const result = await response.json();
       if (!response.ok) {
-        throw new Error(
-          result.details ? `${result.error || 'Sync failed'}: ${result.details}` : result.error || 'Sync failed'
-        );
+        throw new Error(result.details
+          ? `${result.error || 'Sync failed'}: ${result.details}`
+          : result.error || 'Sync failed');
       }
 
       const angelHoldings = Array.isArray(result.data)
@@ -182,7 +214,7 @@ export const PortfolioProvider = ({ children }) => {
       if (Array.isArray(angelHoldings)) {
         const newHoldings = angelHoldings.map(h => ({
           id: `angel_${h.isin || h.tradingsymbol || h.symboltoken || Date.now()}`,
-          assetName: h.tradingsymbol || 'Unknown Asset',
+          assetName: h.tradingsymbol || 'Unknown',
           tag: 'Equity',
           units: parseMoney(h.quantity || h.holdingsquantity),
           buyPrice: parseMoney(h.averageprice || h.averagePrice),
@@ -195,8 +227,8 @@ export const PortfolioProvider = ({ children }) => {
 
         const syncedIds = new Set(newHoldings.map(h => h.id));
         setHoldings(prev => {
-          const local = prev.filter(h => !h.isSynced);
-          const exited = prev
+          const local    = prev.filter(h => !h.isSynced);
+          const exited   = prev
             .filter(h => h.isSynced && h.status === 'active' && !syncedIds.has(h.id))
             .map(h => ({ ...h, status: 'closed', closeDate: new Date().toISOString(), brokerClosed: true }));
           const prevClosed = prev.filter(h => h.isSynced && h.status === 'closed' && !syncedIds.has(h.id));
@@ -218,16 +250,16 @@ export const PortfolioProvider = ({ children }) => {
 
   // Auto-sync every hour
   useEffect(() => {
-    const interval = setInterval(syncAngelOneHoldings, 60 * 60 * 1000);
-    return () => clearInterval(interval);
+    const t = setInterval(syncAngelOneHoldings, 60 * 60 * 1000);
+    return () => clearInterval(t);
   }, [syncAngelOneHoldings]);
 
   // ── Derived values ───────────────────────────────────────────────────────────
 
-  const totalPNL = holdings.filter(h => h.status === 'active').reduce((acc, h) => acc + getHoldingPNL(h), 0);
-  const liquidMoney = wallet.cash + wallet.online;
-  const investedMoney = holdings.filter(h => h.status === 'active').reduce((acc, h) => acc + h.currentPrice * h.units, 0);
-  const totalMoney = liquidMoney + wallet.demat + totalPNL;
+  const totalPNL      = holdings.filter(h => h.status === 'active').reduce((a, h) => a + getHoldingPNL(h), 0);
+  const liquidMoney   = wallet.cash + wallet.online;
+  const investedMoney = holdings.filter(h => h.status === 'active').reduce((a, h) => a + h.currentPrice * h.units, 0);
+  const totalMoney    = liquidMoney + wallet.demat + investedMoney;
 
   return (
     <PortfolioContext.Provider value={{
