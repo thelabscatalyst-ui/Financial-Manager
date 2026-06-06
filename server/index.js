@@ -186,82 +186,102 @@ app.post('/api/save', requireAuth, (req, res) => {
   const { wallet, expenses, holdings, auditLog } = req.body;
   const uid = req.user.id;
 
-  // ── Safety net: refuse to wipe real data ──────────────────────────────────
-  // If the incoming payload looks completely empty (zeros + empty arrays),
-  // check whether the user already has real data. If they do, this is almost
-  // certainly a stale client state from a failed page load — reject the save
-  // and tell the client to reload.
-  const incomingIsEmpty =
-    (!wallet || (wallet.cash === 0 && wallet.online === 0 && wallet.demat === 0)) &&
-    (!expenses || expenses.length === 0) &&
-    (!holdings || holdings.length === 0) &&
-    (!auditLog || auditLog.length === 0);
+  // ── Defense in depth: each category is protected INDEPENDENTLY ─────────────
+  // An empty/zero incoming payload for any category will NEVER wipe existing
+  // real data in that category. The only way to clear data is to add new data
+  // that replaces it (i.e. real mutations from the UI).
 
-  if (incomingIsEmpty) {
-    const existing = db.prepare(`
-      SELECT
-        (SELECT COUNT(*) FROM expenses  WHERE user_id = ?) AS exp_count,
-        (SELECT COUNT(*) FROM holdings  WHERE user_id = ?) AS hold_count,
-        (SELECT COUNT(*) FROM audit_log WHERE user_id = ?) AS audit_count,
-        COALESCE((SELECT cash + online_balance + demat FROM wallet WHERE user_id = ?), 0) AS wallet_total
-    `).get(uid, uid, uid, uid);
-
-    const hasRealData =
-      existing.exp_count > 0 ||
-      existing.hold_count > 0 ||
-      existing.audit_count > 0 ||
-      existing.wallet_total > 0;
-
-    if (hasRealData) {
-      console.warn(`[SAVE BLOCKED] User ${uid} tried to save empty state over real data`);
-      return res.status(409).json({
-        error: 'Refused to overwrite existing data with empty payload',
-        action: 'reload'
-      });
-    }
-  }
+  const skipped = [];
 
   const persist = db.transaction(() => {
-    // Wallet upsert
-    db.prepare(`
-      INSERT INTO wallet (user_id, cash, online_balance, demat) VALUES (?, ?, ?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET
-        cash = excluded.cash,
-        online_balance = excluded.online_balance,
-        demat = excluded.demat
-    `).run(uid, wallet?.cash ?? 0, wallet?.online ?? 0, wallet?.demat ?? 0);
+    // ── Wallet ──────────────────────────────────────────────────────────────
+    const incomingWallet = wallet ?? {};
+    const incCash   = Number(incomingWallet.cash)   || 0;
+    const incOnline = Number(incomingWallet.online) || 0;
+    const incDemat  = Number(incomingWallet.demat)  || 0;
+    const walletIsZero = incCash === 0 && incOnline === 0 && incDemat === 0;
 
-    // Expenses – replace all
-    db.prepare('DELETE FROM expenses WHERE user_id = ?').run(uid);
-    const insertExp = db.prepare('INSERT INTO expenses VALUES (?, ?, ?, ?, ?, ?, ?)');
-    for (const e of (expenses || [])) {
-      insertExp.run(e.id, uid, e.description, e.amount, e.mode, e.important ? 1 : 0, e.date);
+    const existingWallet = db.prepare(
+      'SELECT cash, online_balance, demat FROM wallet WHERE user_id = ?'
+    ).get(uid);
+    const existingWalletHasMoney = existingWallet &&
+      (existingWallet.cash > 0 || existingWallet.online_balance > 0 || existingWallet.demat > 0);
+
+    if (walletIsZero && existingWalletHasMoney) {
+      skipped.push('wallet');
+    } else {
+      db.prepare(`
+        INSERT INTO wallet (user_id, cash, online_balance, demat) VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+          cash = excluded.cash,
+          online_balance = excluded.online_balance,
+          demat = excluded.demat
+      `).run(uid, incCash, incOnline, incDemat);
     }
 
-    // Holdings – replace all
-    db.prepare('DELETE FROM holdings WHERE user_id = ?').run(uid);
-    const insertH = db.prepare(
-      'INSERT INTO holdings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    );
-    for (const h of (holdings || [])) {
-      insertH.run(
-        h.id, uid, h.assetName, h.tag ?? 'Other',
-        h.units, h.buyPrice, h.currentPrice,
-        h.profitAndLoss ?? null, h.status, h.date,
-        h.closeDate ?? null, h.isSynced ? 1 : 0, h.brokerClosed ? 1 : 0
+    // ── Expenses ────────────────────────────────────────────────────────────
+    const incomingExpenses = Array.isArray(expenses) ? expenses : [];
+    const existingExpenseCount = db.prepare(
+      'SELECT COUNT(*) AS n FROM expenses WHERE user_id = ?'
+    ).get(uid).n;
+
+    if (incomingExpenses.length === 0 && existingExpenseCount > 0) {
+      skipped.push('expenses');
+    } else {
+      db.prepare('DELETE FROM expenses WHERE user_id = ?').run(uid);
+      const insertExp = db.prepare('INSERT INTO expenses VALUES (?, ?, ?, ?, ?, ?, ?)');
+      for (const e of incomingExpenses) {
+        insertExp.run(e.id, uid, e.description, e.amount, e.mode, e.important ? 1 : 0, e.date);
+      }
+    }
+
+    // ── Holdings ────────────────────────────────────────────────────────────
+    const incomingHoldings = Array.isArray(holdings) ? holdings : [];
+    const existingHoldingCount = db.prepare(
+      'SELECT COUNT(*) AS n FROM holdings WHERE user_id = ?'
+    ).get(uid).n;
+
+    if (incomingHoldings.length === 0 && existingHoldingCount > 0) {
+      skipped.push('holdings');
+    } else {
+      db.prepare('DELETE FROM holdings WHERE user_id = ?').run(uid);
+      const insertH = db.prepare(
+        'INSERT INTO holdings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       );
+      for (const h of incomingHoldings) {
+        insertH.run(
+          h.id, uid, h.assetName, h.tag ?? 'Other',
+          h.units, h.buyPrice, h.currentPrice,
+          h.profitAndLoss ?? null, h.status, h.date,
+          h.closeDate ?? null, h.isSynced ? 1 : 0, h.brokerClosed ? 1 : 0
+        );
+      }
     }
 
-    // Audit log – replace all
-    db.prepare('DELETE FROM audit_log WHERE user_id = ?').run(uid);
-    const insertA = db.prepare('INSERT INTO audit_log VALUES (?, ?, ?, ?, ?, ?)');
-    for (const e of (auditLog || [])) {
-      insertA.run(e.id, uid, e.type, e.description, JSON.stringify(e.data || {}), e.timestamp);
+    // ── Audit log ───────────────────────────────────────────────────────────
+    const incomingAudit = Array.isArray(auditLog) ? auditLog : [];
+    const existingAuditCount = db.prepare(
+      'SELECT COUNT(*) AS n FROM audit_log WHERE user_id = ?'
+    ).get(uid).n;
+
+    if (incomingAudit.length === 0 && existingAuditCount > 0) {
+      skipped.push('audit_log');
+    } else {
+      db.prepare('DELETE FROM audit_log WHERE user_id = ?').run(uid);
+      const insertA = db.prepare('INSERT INTO audit_log VALUES (?, ?, ?, ?, ?, ?)');
+      for (const e of incomingAudit) {
+        insertA.run(e.id, uid, e.type, e.description, JSON.stringify(e.data || {}), e.timestamp);
+      }
     }
   });
 
   persist();
-  res.json({ ok: true });
+
+  if (skipped.length > 0) {
+    console.warn(`[SAVE PARTIAL] User ${uid}: skipped empty categories ${skipped.join(', ')}`);
+  }
+
+  res.json({ ok: true, skipped });
 });
 
 // ── Angel One proxy ────────────────────────────────────────────────────────────

@@ -95,19 +95,70 @@ export const PortfolioProvider = ({ children }) => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataLoaded]);
 
-  // ── Debounced save to server after any state change ──────────────────────────
+  // ── Save mechanism with flush + beforeunload guarantee ──────────────────────
+  // Three layers ensure data is never lost:
+  //   1. Debounced save (150ms) on every state change
+  //   2. flushSave() force-flushes the pending timer
+  //   3. beforeunload triggers sendBeacon as a final sync save
 
+  const pendingTimer = useRef(null);
+  const latestState  = useRef({ wallet, expenses, holdings, auditLog });
+
+  // Keep latestState in sync with current state at all times
+  useEffect(() => {
+    latestState.current = { wallet, expenses, holdings, auditLog };
+  }, [wallet, expenses, holdings, auditLog]);
+
+  const doSave = useCallback(() => {
+    if (!saveReady.current) return Promise.resolve();
+    return fetch('/api/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(latestState.current),
+      keepalive: true,   // lets save survive tab close
+    }).catch(() => {});
+  }, []);
+
+  // flushSave: cancel debounce + send immediately. Awaitable.
+  const flushSave = useCallback(async () => {
+    if (pendingTimer.current) {
+      clearTimeout(pendingTimer.current);
+      pendingTimer.current = null;
+    }
+    await doSave();
+  }, [doSave]);
+
+  // Debounced save on any state change
   useEffect(() => {
     if (!saveReady.current) return;
-    const t = setTimeout(() => {
-      fetch('/api/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ wallet, expenses, holdings, auditLog })
-      }).catch(() => {});
-    }, 400);
-    return () => clearTimeout(t);
-  }, [wallet, expenses, holdings, auditLog]);
+    if (pendingTimer.current) clearTimeout(pendingTimer.current);
+    pendingTimer.current = setTimeout(() => {
+      pendingTimer.current = null;
+      doSave();
+    }, 150);
+    return () => {
+      if (pendingTimer.current) {
+        clearTimeout(pendingTimer.current);
+        pendingTimer.current = null;
+      }
+    };
+  }, [wallet, expenses, holdings, auditLog, doSave]);
+
+  // Flush on tab close / refresh — sendBeacon survives unload
+  useEffect(() => {
+    const flushOnUnload = () => {
+      if (!saveReady.current) return;
+      const payload = JSON.stringify(latestState.current);
+      // Beacon is fire-and-forget; cookies are included automatically
+      navigator.sendBeacon('/api/save', new Blob([payload], { type: 'application/json' }));
+    };
+    window.addEventListener('beforeunload', flushOnUnload);
+    window.addEventListener('pagehide',     flushOnUnload);
+    return () => {
+      window.removeEventListener('beforeunload', flushOnUnload);
+      window.removeEventListener('pagehide',     flushOnUnload);
+    };
+  }, []);
 
   // ── Audit ────────────────────────────────────────────────────────────────────
 
@@ -267,7 +318,8 @@ export const PortfolioProvider = ({ children }) => {
       addMoney, addExpense, markExpenseImportant,
       addHolding, updateHoldingPrice, closeHolding, deleteHolding,
       totalPNL, liquidMoney, investedMoney, totalMoney,
-      syncAngelOneHoldings, isSyncing, syncError
+      syncAngelOneHoldings, isSyncing, syncError,
+      flushSave
     }}>
       {children}
     </PortfolioContext.Provider>

@@ -1,6 +1,7 @@
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Receipt, Briefcase, ScrollText, Settings, LogOut, BarChart3 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { usePortfolio } from '../context/PortfolioContext';
 
 const NAV = [
   { name: 'Dashboard', path: '/',         icon: LayoutDashboard },
@@ -39,9 +40,13 @@ const NavItem = ({ to, icon: Icon, label, active }) => (
 const DashboardLayout = () => {
   const location = useLocation();
   const navigate  = useNavigate();
-  const { logout } = useAuth();
+  const { logout }    = useAuth();
+  const { flushSave } = usePortfolio();
 
   const handleLogout = async () => {
+    // CRITICAL: flush any pending save BEFORE clearing the auth cookie.
+    // Otherwise pending changes get sent without auth and silently dropped.
+    await flushSave();
     await logout();
     navigate('/login', { replace: true });
   };

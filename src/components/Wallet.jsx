@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { usePortfolio } from '../context/PortfolioContext';
 import { IndianRupee, Landmark, Building2, X } from 'lucide-react';
 import Sparkline from './Sparkline';
@@ -90,8 +90,7 @@ const WCard = ({
   metricCols,
   sparkColor, sparkPhase = 0,
 }) => {
-  const sparkData = makeWave(balance, sparkPhase);
-  const share     = totalMoney > 0 ? (balance / totalMoney) * 100 : 0;
+  const sparkData = useMemo(() => makeWave(balance, sparkPhase), [balance, sparkPhase]);
 
   return (
     <div className="panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -158,12 +157,12 @@ const Wallet = ({ showModal, onModalChange }) => {
     close();
   };
 
-  const cashMonthly  = getMonthlyChange(auditLog, 'cash');
-  const bankMonthly  = getMonthlyChange(auditLog, 'online');
-  const cashLast     = getLastAdded(auditLog, 'cash');
-  const bankLast     = getLastAdded(auditLog, 'online');
-  const lastSync     = getLastSync(auditLog);
-  const activeCount  = holdings.filter(h => h.status === 'active').length;
+  const cashMonthly = useMemo(() => getMonthlyChange(auditLog, 'cash'),   [auditLog]);
+  const bankMonthly = useMemo(() => getMonthlyChange(auditLog, 'online'), [auditLog]);
+  const cashLast    = useMemo(() => getLastAdded(auditLog, 'cash'),       [auditLog]);
+  const bankLast    = useMemo(() => getLastAdded(auditLog, 'online'),     [auditLog]);
+  const lastSync    = useMemo(() => getLastSync(auditLog),                [auditLog]);
+  const activeCount = useMemo(() => holdings.filter(h => h.status === 'active').length, [holdings]);
 
   return (
     <>

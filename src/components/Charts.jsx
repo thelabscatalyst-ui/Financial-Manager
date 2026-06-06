@@ -68,7 +68,7 @@ const DonutCard = ({ title, data, colors }) => (
             <Pie data={data} cx="35%" cy="50%"
               innerRadius={58} outerRadius={78}
               paddingAngle={3} dataKey="value" stroke="none"
-              isAnimationActive={true}
+              isAnimationActive={false}
             >
               {data.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
             </Pie>
